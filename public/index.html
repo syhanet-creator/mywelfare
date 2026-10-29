@@ -58,6 +58,7 @@ footer{max-width:920px;margin:0 auto;padding:0 16px 30px;font-size:12px;color:va
   </div>
   <div style="font-size:12.5px;color:var(--mut)">내 상황 (해당하는 것을 모두 고르세요)</div>
   <div class="chips" id="sit"></div>
+  <label style="font-size:13.5px;display:block;margin:6px 0"><input type="checkbox" id="low" style="width:auto"> 소득 제한이 낮은 제도(기초생활·차상위·저소득 등)도 포함</label>
   <p class="note">입력한 정보는 검색에만 쓰이며 저장되지 않습니다. 조건 판정은 참고용이므로 신청 전 상세 페이지·담당 기관에서 꼭 확인하세요.</p>
  </section>
  <div id="stat"><span id="cnt"></span>
@@ -79,7 +80,7 @@ function card(i){
  <div class="foot"><a class="btn" href="${esc(i.url)}" target="_blank" rel="noopener">상세·신청</a><span>${esc(i.org)}</span>${i.tel?`<span>☎ ${esc(i.tel)}</span>`:''}</div></article>`}
 async function run(p){
  page=p;const my=++seq;
- const u=new URLSearchParams({q:$('q').value,age:$('age').value,sex:$('sex').value,income:$('income').value,field:$('field').value,user:$('user').value,sit:[...sel].join(','),sort:$('sort').value,page:p});
+ const u=new URLSearchParams({q:$('q').value,age:$('age').value,sex:$('sex').value,income:$('income').value,field:$('field').value,user:$('user').value,sit:[...sel].join(','),sort:$('sort').value,low:$('low').checked?'1':'',page:p});
  if(p===1){$('list').innerHTML='<div class="msg">찾는 중… (처음에는 자료를 불러오느라 10~30초 걸릴 수 있어요)</div>';$('more').hidden=true}
  try{
   const r=await fetch('/api/welfare?'+u),d=await r.json();if(my!==seq)return;
@@ -94,6 +95,6 @@ async function run(p){
  }catch(e){if(my===seq)$('list').innerHTML='<div class="msg err">불러오지 못했습니다. 잠시 후 다시 시도하세요.</div>'}}
 $('go').onclick=()=>run(1);$('more').onclick=()=>run(page+1);
 ['q','age'].forEach(i=>$(i).addEventListener('keydown',e=>{if(e.key==='Enter')run(1)}));
-['sex','income','field','user','sort'].forEach(i=>$(i).onchange=()=>run(1));
+['sex','income','field','user','sort','low'].forEach(i=>$(i).onchange=()=>run(1));
 run(1);
 </script></body></html>

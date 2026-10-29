@@ -71,6 +71,8 @@ def _load():
     if _cache["list"] and time.time() - _cache["at"] < TTL:
         return
     services = _fetch_all("serviceList")
+    for s in services:
+        _analyze(s)
     cond, cond_ok = {}, False
     try:
         for c in _fetch_all("supportConditions"):
@@ -79,6 +81,43 @@ def _load():
     except Exception:  # 조건 정보가 없어도 키워드 검색은 동작한다
         pass
     _cache.update(at=time.time(), list=services, cond=cond, cond_ok=cond_ok)
+
+
+INCOME_LOWER = {"0-50": 0, "50-75": 50, "75-100": 75, "100-200": 100, "200+": 200}
+_CAP = re.compile(r"중위\s*소득\s*(?:의\s*)?(\d{2,3})\s*%\s*(?:이하|미만)")
+_LOW = re.compile(r"기초생활|수급자|수급권자|차상위|저소득|생활이\s*어려운|소득과\s*재산이\s*적은|소득이\s*낮은|위기가구|긴급복지|의료급여|한부모가족지원")
+_OPEN = re.compile(r"전\s*국민|누구나|소득\s*(?:기준\s*)?(?:무관|제한\s*없)|소득에\s*관계\s*없")
+_NOUN = r"(?:청년|어린이|청소년|아동|영유아|학생|어르신|노인|신청인|세대주|구직자|근로자|주민|시민|농업인|사람|이상|이하|자(?!녀))"
+_RANGE = re.compile(r"(?:만\s*)?(\d{1,2})\s*세?\s*(?:이상)?\s*[~∼\-]\s*(?:만\s*)?(\d{1,2})\s*세\s*" + _NOUN)
+_MIN = re.compile(r"만\s*(\d{2})\s*세\s*이상\s*(?:의\s*)?(?:노인|어르신|주민|국민|신청인|시민|여성|남성|농업인|근로자|구직자)(?!\s*제외)")
+_MAX = re.compile(r"만\s*(\d{1,2})\s*세\s*(?:이하|미만)\s*(?:의\s*)?(?:어린이|청소년|아동|영유아)")
+
+
+def _analyze(s):
+    """본문에서 소득 상한(중위소득 N% 이하)·저소득 대상 여부·나이 조건을 뽑는다(판정은 참고용)."""
+    txt = " ".join(str(s.get(k, "")) for k in ("서비스명", "서비스목적요약", "지원대상", "선정기준"))
+    caps = [int(x) for x in _CAP.findall(txt)]
+    head = " ".join(str(s.get(k, "")) for k in ("서비스명", "서비스목적요약", "지원대상"))
+    s["_cap"] = max(caps) if caps else None
+    s["_low"] = bool(_LOW.search(head)) and not _OPEN.search(head)
+    ages = [(int(a), int(b)) for a, b in _RANGE.findall(txt)]
+    ages += [(int(a), 200) for a in _MIN.findall(txt)]
+    ages += [(0, int(a)) for a in _MAX.findall(txt)]
+    s["_ages"] = ages
+
+
+def _text_fit(s, age, income, include_low):
+    lower = INCOME_LOWER.get(income)
+    if lower is not None and not include_low:
+        cap = s.get("_cap")
+        if cap is not None and cap <= lower:
+            return False
+        if lower >= 75 and s.get("_low") and (cap is None or cap <= lower):
+            return False
+    ages = s.get("_ages")
+    if age is not None and ages and all(not (lo <= age <= hi) for lo, hi in ages):
+        return False
+    return True
 
 
 def _num(v):
@@ -112,7 +151,7 @@ def _clip(s, n):
     return s if len(s) <= n else s[:n].rstrip() + "…"
 
 
-def search(q="", age=None, sex="", income="", situations=(), field="", user_type="", sort="rel", page=1):
+def search(q="", age=None, sex="", income="", situations=(), field="", user_type="", sort="rel", page=1, include_low=False):
     if not _key():
         return {"error": "no_key", "message": "서버에 DATA_GO_KR_KEY(공공데이터포털 인증키)가 설정되어 있지 않습니다."}
     try:
@@ -129,7 +168,7 @@ def search(q="", age=None, sex="", income="", situations=(), field="", user_type
             continue
         if user_type and user_type not in str(s.get("사용자구분", "")):
             continue
-        if not _fit(cond.get(s.get("서비스ID")), age, sex, income):
+        if not _fit(cond.get(s.get("서비스ID")), age, sex, income) or not _text_fit(s, age, income, include_low):
             continue
         name = str(s.get("서비스명", ""))
         head = str(s.get("서비스목적요약", "")) + " " + str(s.get("지원대상", ""))
@@ -173,10 +212,7 @@ def search(q="", age=None, sex="", income="", situations=(), field="", user_type
 def from_query(path):
     q = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
     g = lambda k: q.get(k, [""])[0].strip()
-    if g("debug"):  # 임시: 서비스 지원조건 원본 확인
-        _load()
-        return {"cond": _cache["cond"].get(g("debug")), "n": len(_cache["cond"])}
     return search(
         q=g("q")[:60], age=_num(g("age")), sex=g("sex")[:1].upper(), income=g("income")[:8],
         situations=[x for x in g("sit").split(",") if x], field=g("field")[:20], user_type=g("user")[:10],
-        sort="views" if g("sort") == "views" else "rel", page=_num(g("page")) or 1)
+        sort="views" if g("sort") == "views" else "rel", page=_num(g("page")) or 1, include_low=g("low") == "1")
