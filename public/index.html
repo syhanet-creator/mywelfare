@@ -1,0 +1,99 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#06305f">
+<link rel="icon" type="image/png" href="/favicon-64.png">
+<title>나의 복지 찾기</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<style>
+:root{--navy:#06305f;--blue:#0a5eb0;--bg:#eef3f9;--card:#fff;--tx:#14202e;--mut:#5b6b7d;--bd:#d9e3ee;--ac:#0a5eb0;--ac-soft:#e6f1fc;--ok:#0f8a82;--shadow:0 1px 2px rgba(6,48,95,.06),0 4px 14px rgba(6,48,95,.06)}
+@media(prefers-color-scheme:dark){:root{--bg:#0b1520;--card:#12202f;--tx:#e6eef7;--mut:#93a4b8;--bd:#1f3347;--ac:#5aa9f0;--ac-soft:#10304f;--ok:#4fd1c5}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.55 Pretendard,"Malgun Gothic",system-ui,sans-serif;padding-bottom:env(safe-area-inset-bottom)}
+.hero{background:linear-gradient(120deg,var(--navy),#0a4a8f 55%,#0f7fc4);color:#fff;padding:24px 0 60px}
+.in{max-width:920px;margin:0 auto;padding:0 16px}
+h1{font-size:26px;margin:6px 0;font-weight:800;letter-spacing:-.02em}
+.lead{color:#cfe6fb;font-size:14px;margin:0}
+.back{color:#8fd3ff;font-size:13px;text-decoration:none}
+.panel{background:var(--card);border:1px solid var(--bd);border-radius:16px;box-shadow:var(--shadow);padding:16px;margin-top:-40px}
+.row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px}
+.row>label{flex:1 1 130px;font-size:12.5px;color:var(--mut);display:flex;flex-direction:column;gap:4px}
+input,select{font:inherit;font-size:15px;padding:9px 10px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);width:100%}
+.q{display:flex;gap:8px}.q input{flex:1}
+button{font:inherit;font-weight:700;border:0;border-radius:10px;padding:9px 18px;background:var(--ac);color:#fff;cursor:pointer}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 12px}
+.chip{border:1px solid var(--bd);background:var(--bg);color:var(--tx);border-radius:999px;padding:5px 12px;font-size:13.5px;font-weight:600;cursor:pointer}
+.chip.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.note{font-size:12.5px;color:var(--mut);margin:8px 0 0}
+#stat{margin:16px 0 8px;font-size:14px;color:var(--mut);display:flex;justify-content:space-between;align-items:center;gap:8px}
+#stat select{width:auto}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;box-shadow:var(--shadow);padding:14px 16px;margin-bottom:10px}
+.card h3{margin:0 0 4px;font-size:17px;line-height:1.35}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.tag{font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px;background:var(--ac-soft);color:var(--ac)}
+.tag.o{background:transparent;border:1px solid var(--bd);color:var(--mut);font-weight:600}
+.sum{margin:4px 0 8px}
+dl{margin:0;display:grid;grid-template-columns:72px 1fr;gap:4px 10px;font-size:14px}
+dt{color:var(--mut)}dd{margin:0}
+.foot{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:10px;font-size:13px;color:var(--mut)}
+.foot a.btn{background:var(--ac);color:#fff;text-decoration:none;font-weight:700;padding:6px 14px;border-radius:10px}
+.msg{padding:28px 12px;text-align:center;color:var(--mut)}
+.err{color:#e5484d}
+#more{display:block;margin:12px auto 30px;background:var(--card);color:var(--ac);border:1px solid var(--bd)}
+footer{max-width:920px;margin:0 auto;padding:0 16px 30px;font-size:12px;color:var(--mut)}
+</style></head><body>
+<header class="hero"><div class="in">
+ 
+ <h1>나의 복지 찾기</h1>
+ <p class="lead">내 나이·소득·상황을 넣으면 받을 수 있는 정부·지자체 공공서비스(혜택)를 찾아 드립니다.</p>
+</div></header>
+<main class="in">
+ <section class="panel">
+  <div class="q"><input id="q" type="search" placeholder="검색어 (예: 월세, 출산, 취업)"><button id="go">검색</button></div>
+  <div class="row" style="margin-top:12px">
+   <label>나이<input id="age" type="number" min="0" max="120" inputmode="numeric" placeholder="만 나이"></label>
+   <label>성별<select id="sex"><option value="">선택 안 함</option><option value="M">남성</option><option value="F">여성</option></select></label>
+   <label>소득(기준 중위소득)<select id="income"><option value="">선택 안 함</option><option value="0-50">50% 이하</option><option value="50-75">50~75%</option><option value="75-100">75~100%</option><option value="100-200">100~200%</option><option value="200+">200% 초과</option></select></label>
+   <label>서비스 분야<select id="field"><option value="">전체</option></select></label>
+   <label>대상<select id="user"><option value="">전체</option><option>개인</option><option>소상공인</option><option>법인/시설/단체</option></select></label>
+  </div>
+  <div style="font-size:12.5px;color:var(--mut)">내 상황 (해당하는 것을 모두 고르세요)</div>
+  <div class="chips" id="sit"></div>
+  <p class="note">입력한 정보는 검색에만 쓰이며 저장되지 않습니다. 조건 판정은 참고용이므로 신청 전 상세 페이지·담당 기관에서 꼭 확인하세요.</p>
+ </section>
+ <div id="stat"><span id="cnt"></span>
+  <select id="sort"><option value="rel">관련도순</option><option value="views">조회수순</option></select></div>
+ <div id="list"><div class="msg">조건을 입력하고 검색하세요.</div></div>
+ <button id="more" hidden>더 보기</button>
+</main>
+<footer>자료: 행정안전부 「대한민국 공공서비스(혜택) 정보」 (공공데이터포털). <span id="upd"></span></footer>
+<script>
+const $=id=>document.getElementById(id),sel=new Set();let page=1,seq=0;
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function chips(list){if($('sit').children.length)return;$('sit').innerHTML=list.map(s=>`<button type="button" class="chip" data-s="${esc(s)}">${esc(s)}</button>`).join('');
+ $('sit').onclick=e=>{const b=e.target.closest('.chip');if(!b)return;b.classList.toggle('on');sel.has(b.dataset.s)?sel.delete(b.dataset.s):sel.add(b.dataset.s);run(1)}}
+function card(i){
+ const row=(k,v)=>v?`<dt>${k}</dt><dd>${esc(v)}</dd>`:'';
+ return `<article class="card"><div class="tags">${i.field?`<span class="tag">${esc(i.field)}</span>`:''}${i.type?`<span class="tag o">${esc(i.type)}</span>`:''}${i.user?`<span class="tag o">${esc(i.user)}</span>`:''}</div>
+ <h3>${esc(i.name)}</h3><p class="sum">${esc(i.summary)}</p>
+ <dl>${row('지원대상',i.target)}${row('지원내용',i.content)}${row('선정기준',i.criteria)}${row('신청방법',i.how)}${row('신청기한',i.deadline)}</dl>
+ <div class="foot"><a class="btn" href="${esc(i.url)}" target="_blank" rel="noopener">상세·신청</a><span>${esc(i.org)}</span>${i.tel?`<span>☎ ${esc(i.tel)}</span>`:''}</div></article>`}
+async function run(p){
+ page=p;const my=++seq;
+ const u=new URLSearchParams({q:$('q').value,age:$('age').value,sex:$('sex').value,income:$('income').value,field:$('field').value,user:$('user').value,sit:[...sel].join(','),sort:$('sort').value,page:p});
+ if(p===1){$('list').innerHTML='<div class="msg">찾는 중… (처음에는 자료를 불러오느라 10~30초 걸릴 수 있어요)</div>';$('more').hidden=true}
+ try{
+  const r=await fetch('/api/welfare?'+u),d=await r.json();if(my!==seq)return;
+  if(d.error){$('list').innerHTML=`<div class="msg err">${esc(d.message||'오류가 발생했습니다.')}</div>`;$('cnt').textContent='';return}
+  chips(d.situations);
+  if(d.fields.length&&$('field').options.length===1)d.fields.forEach(f=>$('field').add(new Option(f,f)));
+  $('cnt').textContent=`${d.total.toLocaleString()}건`+(d.conditions?'':' · 연령·소득 조건 정보를 불러오지 못해 키워드로만 찾았습니다');
+  $('upd').textContent='자료 갱신: '+d.updated;
+  const html=d.items.map(card).join('');
+  if(p===1)$('list').innerHTML=html||'<div class="msg">조건에 맞는 서비스가 없습니다. 조건을 줄여 보세요.</div>';else $('list').insertAdjacentHTML('beforeend',html);
+  $('more').hidden=p*d.pageSize>=d.total;
+ }catch(e){if(my===seq)$('list').innerHTML='<div class="msg err">불러오지 못했습니다. 잠시 후 다시 시도하세요.</div>'}}
+$('go').onclick=()=>run(1);$('more').onclick=()=>run(page+1);
+['q','age'].forEach(i=>$(i).addEventListener('keydown',e=>{if(e.key==='Enter')run(1)}));
+['sex','income','field','user','sort'].forEach(i=>$(i).onchange=()=>run(1));
+run(1);
+</script></body></html>

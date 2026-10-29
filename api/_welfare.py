@@ -1,0 +1,179 @@
+"""나의 복지 찾기: 행정안전부_대한민국 공공서비스(혜택) 정보 오픈API(공공데이터포털 15113968)를 검색한다.
+
+호출하는 주소(odcloud, 인증키 필요 - 환경변수 DATA_GO_KR_KEY):
+  GET /api/gov24/v3/serviceList        : 서비스명·지원대상·지원내용·신청방법·소관기관 등
+  GET /api/gov24/v3/supportConditions  : 서비스별 지원 조건(성별 JA0101/02, 대상 연령 JA0110~11, 소득구간 JA0201~05)
+서비스 목록은 수천 건이라 한 번 내려받아 메모리에 6시간 보관하고, 검색·거름은 서버에서 한다.
+"""
+import json
+import os
+import re
+import time
+import urllib.parse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+
+BASE = "https://api.odcloud.kr/api/gov24/v3"
+PER_PAGE = 1000
+TTL = 6 * 3600
+PAGE_SIZE = 20
+MAX_PAGES = 30  # 안전장치(3만 건)
+_cache = {"at": 0, "list": [], "cond": {}, "cond_ok": False}
+
+# 소득 구간(기준 중위소득 %) -> supportConditions 코드
+INCOME_CODES = {"0-50": "JA0201", "50-75": "JA0202", "75-100": "JA0203", "100-200": "JA0204", "200+": "JA0205"}
+# 내 상황 -> 지원대상·서비스명에서 찾을 말
+SITUATIONS = {
+    "청년": ["청년", "대학생", "사회초년"],
+    "중장년": ["중장년", "신중년", "장년"],
+    "노인": ["노인", "어르신", "고령", "65세"],
+    "임산부·출산": ["임산부", "임신", "출산", "산모", "신생아", "난임"],
+    "영유아·아동": ["영유아", "아동", "어린이", "보육", "육아"],
+    "청소년": ["청소년", "학교밖"],
+    "한부모·조손": ["한부모", "조손", "미혼모"],
+    "장애인": ["장애"],
+    "저소득": ["저소득", "기초생활", "차상위", "수급자", "취약계층"],
+    "다문화·외국인": ["다문화", "외국인", "이주"],
+    "국가보훈": ["보훈", "유공자", "참전"],
+    "농어업인": ["농업", "어업", "농민", "어민", "귀농", "귀촌", "임업"],
+    "소상공인·창업": ["소상공인", "창업", "자영업"],
+    "구직·실직": ["구직", "실업", "실직", "취업", "고용"],
+    "주거": ["주거", "임대", "전세", "월세", "주택"],
+    "질병·의료": ["질병", "의료", "치료", "암", "희귀"],
+}
+
+
+def _key():
+    k = os.environ.get("DATA_GO_KR_KEY", "").strip()
+    return urllib.parse.quote(urllib.parse.unquote(k), safe="") if k else ""  # 인코딩/디코딩 키 모두 허용
+
+
+def _get(endpoint, page):
+    url = f"{BASE}/{endpoint}?page={page}&perPage={PER_PAGE}&returnType=JSON&serviceKey={_key()}"
+    req = urllib.request.Request(url, headers={"User-Agent": "saeul-welfare", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=25) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def _fetch_all(endpoint):
+    first = _get(endpoint, 1)
+    total = int(first.get("totalCount") or 0)
+    rows = list(first.get("data") or [])
+    pages = min(MAX_PAGES, -(-total // PER_PAGE))
+    if pages > 1:
+        with ThreadPoolExecutor(6) as ex:
+            for d in ex.map(lambda p: _get(endpoint, p), range(2, pages + 1)):
+                rows.extend(d.get("data") or [])
+    return rows
+
+
+def _load():
+    if _cache["list"] and time.time() - _cache["at"] < TTL:
+        return
+    services = _fetch_all("serviceList")
+    cond, cond_ok = {}, False
+    try:
+        for c in _fetch_all("supportConditions"):
+            cond[c.get("서비스ID")] = c
+        cond_ok = True
+    except Exception:  # 조건 정보가 없어도 키워드 검색은 동작한다
+        pass
+    _cache.update(at=time.time(), list=services, cond=cond, cond_ok=cond_ok)
+
+
+def _num(v):
+    try:
+        return int(str(v).strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _fit(c, age, sex, income):
+    """지원 조건이 내 정보와 맞지 않는 것이 확실하면 False. 조건이 비어 있으면 통과."""
+    if not c:
+        return True
+    lo, hi = _num(c.get("JA0110")), _num(c.get("JA0111"))
+    if age is not None and (lo or hi):
+        if (lo and age < lo) or (hi and age > hi):
+            return False
+    if sex in ("M", "F"):
+        m, f = c.get("JA0101") == "Y", c.get("JA0102") == "Y"
+        if (m or f) and not (m and f) and ((sex == "M") != m):
+            return False
+    if income in INCOME_CODES:
+        flags = [c.get(code) == "Y" for code in INCOME_CODES.values()]
+        if any(flags) and c.get(INCOME_CODES[income]) != "Y":
+            return False
+    return True
+
+
+def _clip(s, n):
+    s = re.sub(r"\s+", " ", str(s or "")).strip()
+    return s if len(s) <= n else s[:n].rstrip() + "…"
+
+
+def search(q="", age=None, sex="", income="", situations=(), field="", user_type="", sort="rel", page=1):
+    if not _key():
+        return {"error": "no_key", "message": "서버에 DATA_GO_KR_KEY(공공데이터포털 인증키)가 설정되어 있지 않습니다."}
+    try:
+        _load()
+    except Exception as e:
+        return {"error": "upstream", "message": f"공공데이터포털 호출 실패: {type(e).__name__}"}
+
+    terms = [t for t in re.split(r"[\s,]+", q.strip()) if t][:6]
+    sit_terms = [w for s in situations if s in SITUATIONS for w in SITUATIONS[s]]
+    cond = _cache["cond"]
+    out = []
+    for s in _cache["list"]:
+        if field and field not in str(s.get("서비스분야", "")):
+            continue
+        if user_type and user_type not in str(s.get("사용자구분", "")):
+            continue
+        if not _fit(cond.get(s.get("서비스ID")), age, sex, income):
+            continue
+        name = str(s.get("서비스명", ""))
+        head = str(s.get("서비스목적요약", "")) + " " + str(s.get("지원대상", ""))
+        body = str(s.get("지원내용", "")) + " " + str(s.get("선정기준", ""))
+        score = 0
+        for t in terms:
+            hit = (5 if t in name else 0) + (2 if t in head else 0) + (1 if t in body else 0)
+            if not hit:
+                score = -1  # 검색어는 모두 들어 있어야 한다
+                break
+            score += hit
+        if score < 0:
+            continue
+        if sit_terms:
+            sit = sum((3 if w in name else 0) + (2 if w in head else 0) for w in sit_terms)
+            if not sit and not terms:
+                continue  # 검색어 없이 상황만 고른 경우, 그 상황과 관련된 것만
+            score += sit
+        out.append((score, _num(s.get("조회수")) or 0, s))
+    out.sort(key=lambda x: (-x[0], -x[1]) if sort == "rel" else (-x[1], -x[0]))
+
+    total = len(out)
+    page = max(1, page)
+    items = []
+    for score, views, s in out[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]:
+        items.append({
+            "id": s.get("서비스ID"), "name": s.get("서비스명"), "summary": _clip(s.get("서비스목적요약"), 160),
+            "target": _clip(s.get("지원대상"), 220), "content": _clip(s.get("지원내용"), 260),
+            "criteria": _clip(s.get("선정기준"), 200), "how": _clip(s.get("신청방법"), 80),
+            "deadline": _clip(s.get("신청기한"), 80), "org": s.get("소관기관명"), "tel": s.get("전화문의"),
+            "field": s.get("서비스분야"), "type": s.get("지원유형"), "user": s.get("사용자구분"),
+            "url": s.get("상세조회URL") or f"https://www.gov.kr/portal/rcvfvrSvc/dtlEx/{s.get('서비스ID')}",
+            "views": views,
+        })
+    fields = sorted({f.strip() for s in _cache["list"] for f in str(s.get("서비스분야", "")).split(",") if f.strip()})
+    return {"total": total, "page": page, "pageSize": PAGE_SIZE, "items": items, "fields": fields,
+            "situations": list(SITUATIONS), "conditions": _cache["cond_ok"],
+            "updated": time.strftime("%Y-%m-%d %H:%M", time.gmtime(_cache["at"] + 9 * 3600))}
+
+
+def from_query(path):
+    q = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
+    g = lambda k: q.get(k, [""])[0].strip()
+    return search(
+        q=g("q")[:60], age=_num(g("age")), sex=g("sex")[:1].upper(), income=g("income")[:8],
+        situations=[x for x in g("sit").split(",") if x], field=g("field")[:20], user_type=g("user")[:10],
+        sort="views" if g("sort") == "views" else "rel", page=_num(g("page")) or 1)
