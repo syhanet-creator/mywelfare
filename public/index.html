@@ -52,12 +52,15 @@ footer{max-width:920px;margin:0 auto;padding:0 16px 30px;font-size:12px;color:va
   <div class="row" style="margin-top:12px">
    <label>나이<input id="age" type="number" min="0" max="120" inputmode="numeric" placeholder="만 나이"></label>
    <label>성별<select id="sex"><option value="">선택 안 함</option><option value="M">남성</option><option value="F">여성</option></select></label>
+   <label>연봉(세전, 만원)<input id="salary" type="number" min="0" max="999999" inputmode="numeric" placeholder="가구 합산 예: 9900"></label>
+   <label>가구원 수<select id="hh"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></label>
    <label>소득(기준 중위소득)<select id="income"><option value="">선택 안 함</option><option value="0-50">50% 이하</option><option value="50-75">50~75%</option><option value="75-100">75~100%</option><option value="100-200">100~200%</option><option value="200+">200% 초과</option></select></label>
    <label>서비스 분야<select id="field"><option value="">전체</option></select></label>
    <label>대상<select id="user"><option value="">전체</option><option>개인</option><option>소상공인</option><option>법인/시설/단체</option></select></label>
   </div>
   <div style="font-size:12.5px;color:var(--mut)">내 상황 (해당하는 것을 모두 고르세요)</div>
   <div class="chips" id="sit"></div>
+  <p class="note" id="bandnote" style="color:var(--ac);font-weight:600"></p>
   <label style="font-size:13.5px;display:block;margin:6px 0"><input type="checkbox" id="low" style="width:auto"> 소득 제한이 낮은 제도(기초생활·차상위·저소득 등)도 포함</label>
   <p class="note">입력한 정보는 검색에만 쓰이며 저장되지 않습니다. 조건 판정은 참고용이므로 신청 전 상세 페이지·담당 기관에서 꼭 확인하세요.</p>
  </section>
@@ -80,12 +83,16 @@ function card(i){
  <div class="foot"><a class="btn" href="${esc(i.url)}" target="_blank" rel="noopener">상세·신청</a><span>${esc(i.org)}</span>${i.tel?`<span>☎ ${esc(i.tel)}</span>`:''}</div></article>`}
 async function run(p){
  page=p;const my=++seq;
- const u=new URLSearchParams({q:$('q').value,age:$('age').value,sex:$('sex').value,income:$('income').value,field:$('field').value,user:$('user').value,sit:[...sel].join(','),sort:$('sort').value,low:$('low').checked?'1':'',page:p});
+ const u=new URLSearchParams({q:$('q').value,age:$('age').value,sex:$('sex').value,income:$('income').value,salary:$('salary').value,hh:$('hh').value,field:$('field').value,user:$('user').value,sit:[...sel].join(','),sort:$('sort').value,low:$('low').checked?'1':'',page:p});
  if(p===1){$('list').innerHTML='<div class="msg">찾는 중… (처음에는 자료를 불러오느라 10~30초 걸릴 수 있어요)</div>';$('more').hidden=true}
  try{
   const r=await fetch('/api/welfare?'+u),d=await r.json();if(my!==seq)return;
   if(d.error){$('list').innerHTML=`<div class="msg err">${esc(d.message||'오류가 발생했습니다.')}</div>`;$('cnt').textContent='';return}
   chips(d.situations);
+  if(d.band){const L={'0-50':'50% 이하','50-75':'50~75%','75-100':'75~100%','100-200':'100~200%','200+':'200% 초과'};
+   $('income').value=d.band.band;$('income').disabled=true;
+   $('bandnote').textContent=`가구 월 소득 ${Math.round($('salary').value*10000/12/10000).toLocaleString()}만원 ÷ 기준 중위소득 ${Math.round(d.band.median/10000).toLocaleString()}만원(${$('hh').value}인) = ${d.band.pct}% → ${L[d.band.band]}`}
+  else{$('income').disabled=false;$('bandnote').textContent=''}
   if(d.fields.length&&$('field').options.length===1)d.fields.forEach(f=>$('field').add(new Option(f,f)));
   $('cnt').textContent=`${d.total.toLocaleString()}건`+(d.conditions?'':' · 연령·소득 조건 정보를 불러오지 못해 키워드로만 찾았습니다');
   $('upd').textContent='자료 갱신: '+d.updated;
@@ -94,7 +101,7 @@ async function run(p){
   $('more').hidden=p*d.pageSize>=d.total;
  }catch(e){if(my===seq)$('list').innerHTML='<div class="msg err">불러오지 못했습니다. 잠시 후 다시 시도하세요.</div>'}}
 $('go').onclick=()=>run(1);$('more').onclick=()=>run(page+1);
-['q','age'].forEach(i=>$(i).addEventListener('keydown',e=>{if(e.key==='Enter')run(1)}));
-['sex','income','field','user','sort','low'].forEach(i=>$(i).onchange=()=>run(1));
+['q','age','salary'].forEach(i=>$(i).addEventListener('keydown',e=>{if(e.key==='Enter')run(1)}));
+['sex','income','hh','field','user','sort','low'].forEach(i=>$(i).onchange=()=>run(1));
 run(1);
 </script></body></html>

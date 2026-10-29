@@ -83,6 +83,11 @@ def _load():
     _cache.update(at=time.time(), list=services, cond=cond, cond_ok=cond_ok)
 
 
+# 2026년 기준 중위소득(원/월), 가구원 수별. 7인 초과는 1인 증가마다 +959,199
+MEDIAN = {1: 2564238, 2: 4199292, 3: 5359036, 4: 6494738, 5: 7556719, 6: 8555952, 7: 9515151}
+_AMT = re.compile(r"소득((?:(?!재산|가액|보증금|주택|매출|자산|○|ㆍ|※)[^\n]){0,60}?)(\d[\d,]*(?:\.\d+)?)\s*(천만|억|만)\s*원\s*(이하|미만)")
+_BARE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(천만|억|만)\s*원\s*(?:이하|미만)")
+_UNIT = {"천만": 1000, "억": 10000, "만": 1}
 INCOME_LOWER = {"0-50": 0, "50-75": 50, "75-100": 75, "100-200": 100, "200+": 200}
 _CAP = re.compile(r"중위\s*소득\s*(?:의\s*)?(\d{2,3})\s*%\s*(?:이하|미만)")
 _LOW = re.compile(r"기초생활|수급자|수급권자|차상위|저소득|생활이\s*어려운|소득과\s*재산이\s*적은|소득이\s*낮은|위기가구|긴급복지|의료급여|한부모가족지원")
@@ -104,9 +109,20 @@ def _analyze(s):
     ages += [(int(a), 200) for a in _MIN.findall(txt)]
     ages += [(0, int(a)) for a in _MAX.findall(txt)]
     s["_ages"] = ages
+    caps_amt = []  # 연 소득 상한(만원). '월 소득 N만원 이하'는 ×12
+    for m in _AMT.finditer(txt):
+        v = float(m.group(2).replace(",", "")) * _UNIT[m.group(3)]
+        if "월" in txt[max(0, m.start() - 4):m.start() + 3] or "월" in m.group(1):
+            v *= 12
+        caps_amt.append(v)
+        tail = txt[m.end():m.end() + 80]  # 같은 문장의 다른 유형(신혼가구 N천만원 이하 등)도 상한 후보
+        for m2 in _BARE.finditer(tail):
+            if not re.search(r"재산|가액|보증금|주택|매출|자산|○|ㆍ|※", tail[:m2.start()]):
+                caps_amt.append(float(m2.group(1).replace(",", "")) * _UNIT[m2.group(2)])
+    s["_scap"] = max(caps_amt) if caps_amt else None
 
 
-def _text_fit(s, age, income, include_low):
+def _text_fit(s, age, income, include_low, salary=None):
     lower = INCOME_LOWER.get(income)
     if lower is not None and not include_low:
         cap = s.get("_cap")
@@ -114,6 +130,8 @@ def _text_fit(s, age, income, include_low):
             return False
         if lower >= 75 and s.get("_low") and (cap is None or cap <= lower):
             return False
+    if salary and s.get("_scap") and s["_scap"] < salary:
+        return False
     ages = s.get("_ages")
     if age is not None and ages and all(not (lo <= age <= hi) for lo, hi in ages):
         return False
@@ -151,7 +169,7 @@ def _clip(s, n):
     return s if len(s) <= n else s[:n].rstrip() + "…"
 
 
-def search(q="", age=None, sex="", income="", situations=(), field="", user_type="", sort="rel", page=1, include_low=False):
+def search(q="", age=None, sex="", income="", situations=(), field="", user_type="", sort="rel", page=1, include_low=False, salary=None, hh=1):
     if not _key():
         return {"error": "no_key", "message": "서버에 DATA_GO_KR_KEY(공공데이터포털 인증키)가 설정되어 있지 않습니다."}
     try:
@@ -159,6 +177,12 @@ def search(q="", age=None, sex="", income="", situations=(), field="", user_type
     except Exception as e:
         return {"error": "upstream", "message": f"공공데이터포털 호출 실패: {type(e).__name__}"}
 
+    band = None
+    if salary:  # 가구 합산 세전 연봉(만원) -> 기준 중위소득 대비 %와 구간
+        med = MEDIAN.get(hh) or MEDIAN[7] + 959199 * (hh - 7)
+        pct = salary * 10000 / 12 / med * 100
+        income = next(k for k, hi in (("0-50", 50), ("50-75", 75), ("75-100", 100), ("100-200", 200), ("200+", 1e9)) if pct <= hi)
+        band = {"pct": round(pct, 1), "band": income, "median": med}
     terms = [t for t in re.split(r"[\s,]+", q.strip()) if t][:6]
     sit_terms = [w for s in situations if s in SITUATIONS for w in SITUATIONS[s]]
     cond = _cache["cond"]
@@ -168,7 +192,7 @@ def search(q="", age=None, sex="", income="", situations=(), field="", user_type
             continue
         if user_type and user_type not in str(s.get("사용자구분", "")):
             continue
-        if not _fit(cond.get(s.get("서비스ID")), age, sex, income) or not _text_fit(s, age, income, include_low):
+        if not _fit(cond.get(s.get("서비스ID")), age, sex, income) or not _text_fit(s, age, income, include_low, salary):
             continue
         name = str(s.get("서비스명", ""))
         head = str(s.get("서비스목적요약", "")) + " " + str(s.get("지원대상", ""))
@@ -205,7 +229,7 @@ def search(q="", age=None, sex="", income="", situations=(), field="", user_type
         })
     fields = sorted({f.strip() for s in _cache["list"] for f in str(s.get("서비스분야", "")).split(",") if f.strip()})
     return {"total": total, "page": page, "pageSize": PAGE_SIZE, "items": items, "fields": fields,
-            "situations": list(SITUATIONS), "conditions": _cache["cond_ok"],
+            "situations": list(SITUATIONS), "conditions": _cache["cond_ok"], "band": band,
             "updated": time.strftime("%Y-%m-%d %H:%M", time.gmtime(_cache["at"] + 9 * 3600))}
 
 
@@ -215,4 +239,5 @@ def from_query(path):
     return search(
         q=g("q")[:60], age=_num(g("age")), sex=g("sex")[:1].upper(), income=g("income")[:8],
         situations=[x for x in g("sit").split(",") if x], field=g("field")[:20], user_type=g("user")[:10],
-        sort="views" if g("sort") == "views" else "rel", page=_num(g("page")) or 1, include_low=g("low") == "1")
+        sort="views" if g("sort") == "views" else "rel", page=_num(g("page")) or 1, include_low=g("low") == "1",
+        salary=_num(g("salary")), hh=min(max(_num(g("hh")) or 1, 1), 15))
