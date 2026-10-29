@@ -4,7 +4,7 @@
 
 - 이미 처리했고 원문이 그대로인 서비스는 건너뛴다(이어서 실행 가능, 바뀐 서비스만 다시 처리).
 - 조회수 많은 서비스부터 처리한다.
-- 모델은 환경변수 GEMINI_MODEL (기본 gemini-2.5-flash)
+- 모델은 환경변수 GEMINI_MODEL 로 지정(비우면 사용 가능한 최신 Flash 모델을 자동 선택)
 """
 import argparse
 import hashlib
@@ -26,7 +26,10 @@ import _welfare  # noqa: E402
 OUT = os.path.join(ROOT, "data", "eligibility.json")
 SCHEMA_VERSION = 1
 BATCH = 6
-MODEL = os.environ.get("GEMINI_MODEL", "").strip() or "gemini-2.5-flash"  # 비어 있으면 기본값
+MODEL = os.environ.get("GEMINI_MODEL", "").strip()  # 비어 있으면 현재 사용 가능한 Flash 모델을 자동으로 고른다
+_candidates = []  # 자동 선택 시 후보 모델(좋은 순)
+_lock_model = threading.Lock()
+API = "https://generativelanguage.googleapis.com/v1beta"
 
 SYSTEM = """너는 한국 공공서비스(복지 혜택)의 '신청 자격'을 구조화하는 도우미다. 서비스마다 지원대상·선정기준 원문을 읽고 아래 규칙으로 JSON 을 만든다.
 원문에 근거가 있는 것만 채우고, 모르면 null/빈 배열로 둔다. 추측하지 않는다.
@@ -71,12 +74,57 @@ def fingerprint(src):
     return hashlib.sha1((str(SCHEMA_VERSION) + json.dumps(src, ensure_ascii=False, sort_keys=True)).encode()).hexdigest()[:12]
 
 
+def discover_models(key):
+    """generateContent 를 지원하는 Flash 계열 모델을 최신·정식 버전 우선으로 정렬해 돌려준다."""
+    import re
+    names = []
+    token = ""
+    for _ in range(10):
+        req = urllib.request.Request(f"{API}/models?pageSize=200" + (f"&pageToken={token}" if token else ""),
+                                     headers={"x-goog-api-key": key})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            d = json.loads(r.read().decode())
+        names += [m for m in d.get("models", []) if "generateContent" in m.get("supportedGenerationMethods", [])]
+        token = d.get("nextPageToken", "")
+        if not token:
+            break
+    ranked = []
+    for m in names:
+        n = m["name"].split("/", 1)[-1]
+        mt = re.fullmatch(r"gemini-(\d+(?:\.\d+)?)-flash(-lite)?(-\w+)*", n)
+        if not mt or re.search(r"image|tts|live|audio|thinking|exp|embedding|robotics|computer|latest", n):
+            continue
+        ranked.append((not mt.group(2), float(mt.group(1)), "preview" not in n, n))
+    ranked.sort(reverse=True)  # lite 아님 -> 높은 버전 -> 정식 순
+    return [n for *_, n in ranked]
+
+
+def _pick_model(key, failed=None):
+    global MODEL
+    with _lock_model:
+        if failed and MODEL == failed:
+            MODEL = ""
+        if not MODEL:
+            if not _candidates:
+                _candidates.extend(discover_models(key))
+                print("사용 가능한 모델 후보:", _candidates[:6], flush=True)
+            while _candidates and not MODEL:
+                MODEL = _candidates.pop(0)
+                if MODEL == failed:
+                    MODEL = ""
+            if not MODEL:
+                raise RuntimeError("사용 가능한 Gemini Flash 모델을 찾지 못했습니다. 저장소 Variables 에 GEMINI_MODEL 을 지정하세요.")
+            print("사용 모델:", MODEL, flush=True)
+        return MODEL
+
+
 def call_gemini(batch, key, tries=6):
     body = {"systemInstruction": {"parts": [{"text": SYSTEM}]},
             "contents": [{"role": "user", "parts": [{"text": json.dumps(batch, ensure_ascii=False)}]}],
             "generationConfig": {"temperature": 0, "responseMimeType": "application/json", "responseSchema": _schema()}}
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
     for n in range(tries):
+        model = _pick_model(key)
+        url = f"{API}/models/{model}:generateContent"
         req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                      headers={"Content-Type": "application/json", "x-goog-api-key": key})
         try:
@@ -84,10 +132,15 @@ def call_gemini(batch, key, tries=6):
                 d = json.loads(r.read().decode())
             return json.loads(d["candidates"][0]["content"]["parts"][0]["text"])
         except urllib.error.HTTPError as e:
+            msg = e.read()[:300].decode("utf-8", "replace")
+            if e.code in (400, 403, 404) and "model" in msg.lower() and not os.environ.get("GEMINI_MODEL", "").strip() and n < tries - 1:
+                print(f"모델 {model} 사용 불가 -> 다음 후보로 전환: {msg[:100]!r}", flush=True)
+                _pick_model(key, failed=model)
+                continue
             if e.code in (429, 500, 502, 503, 504) and n < tries - 1:
                 time.sleep(min(60, 3 * 2 ** n))
                 continue
-            raise RuntimeError(f"Gemini HTTP {e.code} (model={MODEL}): {e.read()[:300].decode('utf-8', 'replace')}")
+            raise RuntimeError(f"Gemini HTTP {e.code} (model={model}): {msg}")
         except (urllib.error.URLError, TimeoutError, KeyError, IndexError, ValueError):
             if n < tries - 1:
                 time.sleep(3 * 2 ** n)
@@ -154,7 +207,7 @@ def main():
             todo.append((src, fingerprint(src)))
     if a.limit:
         todo = todo[:a.limit]
-    print(f"전체 {len(services)}건, 이번 처리 {len(todo)}건, 모델 {MODEL}", flush=True)
+    print(f"전체 {len(services)}건, 이번 처리 {len(todo)}건, 모델 {MODEL or '(자동 선택)'}", flush=True)
 
     lock = threading.Lock()
     deadline = time.time() + a.max_minutes * 60 if a.max_minutes else None
@@ -163,7 +216,7 @@ def main():
     def save():
         tmp = OUT + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"version": 1, "model": MODEL, "items": items}, f, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            json.dump({"version": 1, "model": MODEL or "", "items": items}, f, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         os.replace(tmp, OUT)
 
     def work(chunk):
