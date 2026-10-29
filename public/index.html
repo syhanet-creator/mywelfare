@@ -55,6 +55,8 @@ footer{max-width:920px;margin:0 auto;padding:0 16px 30px;font-size:12px;color:va
    <label>연봉(세전, 만원)<input id="salary" type="number" min="0" max="999999" inputmode="numeric" placeholder="가구 합산 예: 9900"></label>
    <label>가구원 수<select id="hh"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></label>
    <label>소득(기준 중위소득)<select id="income"><option value="">선택 안 함</option><option value="0-50">50% 이하</option><option value="50-75">50~75%</option><option value="75-100">75~100%</option><option value="100-200">100~200%</option><option value="200+">200% 초과</option></select></label>
+   <label>거주 시·도<select id="sido"><option value="">선택 안 함</option></select></label>
+   <label>시·군·구<input id="sigungu" type="text" maxlength="12" placeholder="예: 수원시"></label>
    <label>서비스 분야<select id="field"><option value="">전체</option></select></label>
    <label>대상<select id="user"><option value="">전체</option><option>개인</option><option>소상공인</option><option>법인/시설/단체</option></select></label>
   </div>
@@ -64,6 +66,7 @@ footer{max-width:920px;margin:0 auto;padding:0 16px 30px;font-size:12px;color:va
   <label style="font-size:13.5px;display:block;margin:6px 0"><input type="checkbox" id="low" style="width:auto"> 소득 제한이 낮은 제도(기초생활·차상위·저소득 등)도 포함</label>
   <p class="note">입력한 정보는 검색에만 쓰이며 저장되지 않습니다. 조건 판정은 참고용이므로 신청 전 상세 페이지·담당 기관에서 꼭 확인하세요.</p>
  </section>
+ <div id="tabs" style="display:flex;gap:8px;margin-top:16px"><button class="chip on" data-v="ok" id="t-ok">해당</button><button class="chip" data-v="check" id="t-check">확인 필요</button></div>
  <div id="stat"><span id="cnt"></span>
   <select id="sort"><option value="rel">관련도순</option><option value="views">조회수순</option></select></div>
  <div id="list"><div class="msg">조건을 입력하고 검색하세요.</div></div>
@@ -71,24 +74,26 @@ footer{max-width:920px;margin:0 auto;padding:0 16px 30px;font-size:12px;color:va
 </main>
 <footer>자료: 행정안전부 「대한민국 공공서비스(혜택) 정보」 (공공데이터포털). <span id="upd"></span></footer>
 <script>
-const $=id=>document.getElementById(id),sel=new Set();let page=1,seq=0;
+const $=id=>document.getElementById(id),sel=new Set();let page=1,seq=0,view='ok';
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function chips(list){if($('sit').children.length)return;$('sit').innerHTML=list.map(s=>`<button type="button" class="chip" data-s="${esc(s)}">${esc(s)}</button>`).join('');
  $('sit').onclick=e=>{const b=e.target.closest('.chip');if(!b)return;b.classList.toggle('on');sel.has(b.dataset.s)?sel.delete(b.dataset.s):sel.add(b.dataset.s);run(1)}}
 function card(i){
  const row=(k,v)=>v?`<dt>${k}</dt><dd>${esc(v)}</dd>`:'';
  return `<article class="card"><div class="tags">${i.field?`<span class="tag">${esc(i.field)}</span>`:''}${i.type?`<span class="tag o">${esc(i.type)}</span>`:''}${i.user?`<span class="tag o">${esc(i.user)}</span>`:''}</div>
- <h3>${esc(i.name)}</h3><p class="sum">${esc(i.summary)}</p>
+ <h3>${esc(i.name)}</h3>${i.notes&&i.notes.length?`<div class="tags">${i.notes.map(n=>`<span class="tag o" style="color:var(--ac)">${esc(n)}</span>`).join('')}</div>`:''}${i.analyzed?'':'<div class="note" style="margin:0 0 6px">조건 자동 분석 전 — 키워드 기준으로 찾은 결과입니다.</div>'}<p class="sum">${esc(i.summary)}</p>
  <dl>${row('지원대상',i.target)}${row('지원내용',i.content)}${row('선정기준',i.criteria)}${row('신청방법',i.how)}${row('신청기한',i.deadline)}</dl>
  <div class="foot"><a class="btn" href="${esc(i.url)}" target="_blank" rel="noopener">상세·신청</a><span>${esc(i.org)}</span>${i.tel?`<span>☎ ${esc(i.tel)}</span>`:''}</div></article>`}
 async function run(p){
  page=p;const my=++seq;
- const u=new URLSearchParams({q:$('q').value,age:$('age').value,sex:$('sex').value,income:$('income').value,salary:$('salary').value,hh:$('hh').value,field:$('field').value,user:$('user').value,sit:[...sel].join(','),sort:$('sort').value,low:$('low').checked?'1':'',page:p});
+ const u=new URLSearchParams({q:$('q').value,age:$('age').value,sex:$('sex').value,income:$('income').value,salary:$('salary').value,hh:$('hh').value,field:$('field').value,user:$('user').value,sit:[...sel].join(','),sort:$('sort').value,view,sido:$('sido').value,sigungu:$('sigungu').value,low:$('low').checked?'1':'',page:p});
  if(p===1){$('list').innerHTML='<div class="msg">찾는 중… (처음에는 자료를 불러오느라 10~30초 걸릴 수 있어요)</div>';$('more').hidden=true}
  try{
   const r=await fetch('/api/welfare?'+u),d=await r.json();if(my!==seq)return;
   if(d.error){$('list').innerHTML=`<div class="msg err">${esc(d.message||'오류가 발생했습니다.')}</div>`;$('cnt').textContent='';return}
   chips(d.situations);
+  if($('sido').options.length===1)d.sidos.forEach(x=>$('sido').add(new Option(x,x)));
+  $('t-ok').textContent=`해당 ${d.counts.ok.toLocaleString()}`;$('t-check').textContent=`확인 필요 ${d.counts.check.toLocaleString()}`;
   if(d.band){const L={'0-50':'50% 이하','50-75':'50~75%','75-100':'75~100%','100-200':'100~200%','200+':'200% 초과'};
    $('income').value=d.band.band;$('income').disabled=true;
    $('bandnote').textContent=`가구 월 소득 ${Math.round($('salary').value*10000/12/10000).toLocaleString()}만원 ÷ 기준 중위소득 ${Math.round(d.band.median/10000).toLocaleString()}만원(${$('hh').value}인) = ${d.band.pct}% → ${L[d.band.band]}`}
@@ -100,8 +105,9 @@ async function run(p){
   if(p===1)$('list').innerHTML=html||'<div class="msg">조건에 맞는 서비스가 없습니다. 조건을 줄여 보세요.</div>';else $('list').insertAdjacentHTML('beforeend',html);
   $('more').hidden=p*d.pageSize>=d.total;
  }catch(e){if(my===seq)$('list').innerHTML='<div class="msg err">불러오지 못했습니다. 잠시 후 다시 시도하세요.</div>'}}
+$('tabs').onclick=e=>{const b=e.target.closest('button');if(!b)return;view=b.dataset.v;document.querySelectorAll('#tabs button').forEach(x=>x.classList.toggle('on',x===b));run(1)};
 $('go').onclick=()=>run(1);$('more').onclick=()=>run(page+1);
-['q','age','salary'].forEach(i=>$(i).addEventListener('keydown',e=>{if(e.key==='Enter')run(1)}));
-['sex','income','hh','field','user','sort','low'].forEach(i=>$(i).onchange=()=>run(1));
+['q','age','salary','sigungu'].forEach(i=>$(i).addEventListener('keydown',e=>{if(e.key==='Enter')run(1)}));
+['sex','income','hh','sido','field','user','sort','low'].forEach(i=>$(i).onchange=()=>run(1));
 run(1);
 </script></body></html>

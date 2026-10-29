@@ -13,6 +13,11 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
+try:
+    from . import _eligibility as elig
+except ImportError:  # Vercel(api/ 가 경로에 있는 경우)
+    import _eligibility as elig
+
 BASE = "https://api.odcloud.kr/api/gov24/v3"
 PER_PAGE = 1000
 TTL = 6 * 3600
@@ -40,6 +45,10 @@ SITUATIONS = {
     "구직·실직": ["구직", "실업", "실직", "취업", "고용"],
     "주거": ["주거", "임대", "전세", "월세", "주택"],
     "질병·의료": ["질병", "의료", "치료", "암", "희귀"],
+    "신혼부부": ["신혼", "결혼", "혼인"],
+    "다자녀": ["다자녀", "셋째", "다둥이"],
+    "재직자": ["재직", "근로자", "직장인", "중소기업"],
+    "학생": ["학생", "장학", "대학", "학자금"],
 }
 
 
@@ -169,7 +178,11 @@ def _clip(s, n):
     return s if len(s) <= n else s[:n].rstrip() + "…"
 
 
-def search(q="", age=None, sex="", income="", situations=(), field="", user_type="", sort="rel", page=1, include_low=False, salary=None, hh=1):
+def elig_lower(income):
+    return INCOME_LOWER.get(income)
+
+
+def search(q="", age=None, sex="", income="", situations=(), field="", user_type="", sort="rel", page=1, include_low=False, salary=None, hh=1, sido="", sigungu="", view="ok"):
     if not _key():
         return {"error": "no_key", "message": "서버에 DATA_GO_KR_KEY(공공데이터포털 인증키)가 설정되어 있지 않습니다."}
     try:
@@ -186,14 +199,27 @@ def search(q="", age=None, sex="", income="", situations=(), field="", user_type
     terms = [t for t in re.split(r"[\s,]+", q.strip()) if t][:6]
     sit_terms = [w for s in situations if s in SITUATIONS for w in SITUATIONS[s]]
     cond = _cache["cond"]
-    out = []
+    edata = elig.load()
+    lo_pct = elig_lower(income)
+    profile = {"age": age, "sex": sex if sex in ("M", "F") else "", "salary": salary,
+               "pct": band["pct"] if band else None, "pct_lo": None if band else lo_pct,
+               "sido": sido if sido in elig.SIDO else "", "sigungu": sigungu[:20], "include_low": include_low,
+               "tags": {t for c in situations for t in elig.CHIP_TAGS.get(c, [])}}
+    out, counts = [], {"ok": 0, "check": 0}
     for s in _cache["list"]:
         if field and field not in str(s.get("서비스분야", "")):
             continue
         if user_type and user_type not in str(s.get("사용자구분", "")):
             continue
-        if not _fit(cond.get(s.get("서비스ID")), age, sex, income) or not _text_fit(s, age, income, include_low, salary):
-            continue
+        e = edata.get(s.get("서비스ID"))
+        if e is not None:  # AI 로 구조화한 자격조건이 있으면 그것으로 정확히 판정
+            status, notes = elig.judge(e, profile)
+            if status == "no":
+                continue
+        else:  # 아직 분석 전: 키워드·조건코드 기준(대략)
+            if not _fit(cond.get(s.get("서비스ID")), age, sex, income) or not _text_fit(s, age, income, include_low, salary):
+                continue
+            status, notes = "ok", []
         name = str(s.get("서비스명", ""))
         head = str(s.get("서비스목적요약", "")) + " " + str(s.get("지원대상", ""))
         body = str(s.get("지원내용", "")) + " " + str(s.get("선정기준", ""))
@@ -208,16 +234,19 @@ def search(q="", age=None, sex="", income="", situations=(), field="", user_type
             continue
         if sit_terms:
             sit = sum((3 if w in name else 0) + (2 if w in head else 0) for w in sit_terms)
-            if not sit and not terms:
-                continue  # 검색어 없이 상황만 고른 경우, 그 상황과 관련된 것만
+            if not sit and not terms and e is None:
+                continue  # 분석 전 서비스는 키워드로만 판단할 수 있으므로 상황과 관련된 것만
             score += sit
-        out.append((score, _num(s.get("조회수")) or 0, s))
+        counts[status] += 1
+        if status != view:
+            continue
+        out.append((score, _num(s.get("조회수")) or 0, s, notes, e is not None))
     out.sort(key=lambda x: (-x[0], -x[1]) if sort == "rel" else (-x[1], -x[0]))
 
     total = len(out)
     page = max(1, page)
     items = []
-    for score, views, s in out[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]:
+    for score, views, s, notes, analyzed in out[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]:
         items.append({
             "id": s.get("서비스ID"), "name": s.get("서비스명"), "summary": _clip(s.get("서비스목적요약"), 160),
             "target": _clip(s.get("지원대상"), 220), "content": _clip(s.get("지원내용"), 260),
@@ -225,11 +254,11 @@ def search(q="", age=None, sex="", income="", situations=(), field="", user_type
             "deadline": _clip(s.get("신청기한"), 80), "org": s.get("소관기관명"), "tel": s.get("전화문의"),
             "field": s.get("서비스분야"), "type": s.get("지원유형"), "user": s.get("사용자구분"),
             "url": s.get("상세조회URL") or f"https://www.gov.kr/portal/rcvfvrSvc/dtlEx/{s.get('서비스ID')}",
-            "views": views,
+            "views": views, "notes": notes, "analyzed": analyzed,
         })
     fields = sorted({f.strip() for s in _cache["list"] for f in str(s.get("서비스분야", "")).split(",") if f.strip()})
-    return {"total": total, "page": page, "pageSize": PAGE_SIZE, "items": items, "fields": fields,
-            "situations": list(SITUATIONS), "conditions": _cache["cond_ok"], "band": band,
+    return {"total": total, "counts": counts, "analyzed": len(edata), "page": page, "pageSize": PAGE_SIZE, "items": items, "fields": fields,
+            "situations": list(SITUATIONS), "sidos": elig.SIDO, "conditions": _cache["cond_ok"], "band": band,
             "updated": time.strftime("%Y-%m-%d %H:%M", time.gmtime(_cache["at"] + 9 * 3600))}
 
 
@@ -240,4 +269,5 @@ def from_query(path):
         q=g("q")[:60], age=_num(g("age")), sex=g("sex")[:1].upper(), income=g("income")[:8],
         situations=[x for x in g("sit").split(",") if x], field=g("field")[:20], user_type=g("user")[:10],
         sort="views" if g("sort") == "views" else "rel", page=_num(g("page")) or 1, include_low=g("low") == "1",
-        salary=_num(g("salary")), hh=min(max(_num(g("hh")) or 1, 1), 15))
+        salary=_num(g("salary")), hh=min(max(_num(g("hh")) or 1, 1), 15),
+        sido=g("sido")[:12], sigungu=g("sigungu"), view="check" if g("view") == "check" else "ok")

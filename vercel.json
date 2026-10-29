@@ -1,6 +1,11 @@
 {
-  "regions": ["icn1"],
+  "regions": [
+    "icn1"
+  ],
   "functions": {
-    "api/welfare.py": {"maxDuration": 60, "includeFiles": "api/_welfare.py"}
+    "api/welfare.py": {
+      "maxDuration": 60,
+      "includeFiles": "{api/_welfare.py,api/_eligibility.py,data/**}"
+    }
   }
 }
