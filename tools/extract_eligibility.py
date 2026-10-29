@@ -26,7 +26,7 @@ import _welfare  # noqa: E402
 OUT = os.path.join(ROOT, "data", "eligibility.json")
 SCHEMA_VERSION = 1
 BATCH = 6
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL = os.environ.get("GEMINI_MODEL", "").strip() or "gemini-2.5-flash"  # 비어 있으면 기본값
 
 SYSTEM = """너는 한국 공공서비스(복지 혜택)의 '신청 자격'을 구조화하는 도우미다. 서비스마다 지원대상·선정기준 원문을 읽고 아래 규칙으로 JSON 을 만든다.
 원문에 근거가 있는 것만 채우고, 모르면 null/빈 배열로 둔다. 추측하지 않는다.
@@ -87,7 +87,7 @@ def call_gemini(batch, key, tries=6):
             if e.code in (429, 500, 502, 503, 504) and n < tries - 1:
                 time.sleep(min(60, 3 * 2 ** n))
                 continue
-            raise RuntimeError(f"Gemini HTTP {e.code}: {e.read()[:200]!r}")
+            raise RuntimeError(f"Gemini HTTP {e.code} (model={MODEL}): {e.read()[:300].decode('utf-8', 'replace')}")
         except (urllib.error.URLError, TimeoutError, KeyError, IndexError, ValueError):
             if n < tries - 1:
                 time.sleep(3 * 2 ** n)
@@ -195,6 +195,8 @@ def main():
         list(ex.map(work, chunks))
     save()
     print(f"완료: 성공 {stats['done']}, 실패 {stats['fail']}, 저장 {len(items)}건 -> {OUT}")
+    if todo and not stats["done"]:  # 전부 실패하면 실행을 실패로 표시(빈 결과를 커밋하지 않게)
+        sys.exit("모든 요청이 실패했습니다. 위 오류 메시지(모델명·API 키)를 확인하세요.")
 
 
 if __name__ == "__main__":
