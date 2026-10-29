@@ -173,6 +173,9 @@ def search(q="", age=None, sex="", income="", situations=(), field="", user_type
 def from_query(path):
     q = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
     g = lambda k: q.get(k, [""])[0].strip()
+    if g("debug"):  # 임시: 서비스 지원조건 원본 확인
+        _load()
+        return {"cond": _cache["cond"].get(g("debug")), "n": len(_cache["cond"])}
     return search(
         q=g("q")[:60], age=_num(g("age")), sex=g("sex")[:1].upper(), income=g("income")[:8],
         situations=[x for x in g("sit").split(",") if x], field=g("field")[:20], user_type=g("user")[:10],
